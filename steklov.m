@@ -11,10 +11,10 @@
    clear;
 %
 % Define major and minor axis of ellipse, and centre
-   A = 1.0; B = 1.; cx = 0; cy = 0;
+   A = 2; B = 1/A; cx = 0; cy = 0;
 %
 % Define closed curve, parametrized by alpha
-   Np = 128; dth = 2*pi/Np; alpha = 0:dth:2*pi-dth;
+   Np = 256; dth = 2*pi/Np; alpha = 0:dth:2*pi-dth;
    [x,y,dx,dy,d2x,d2y,ds] = curve_param(alpha,A,B,cx,cy);
 %
 % Plot
@@ -30,19 +30,6 @@
    N = [dy./ds;-dx./ds]';
    quiver(R(:,1),R(:,2),dR_dalpha(:,1),dR_dalpha(:,2),0.75)
    quiver(R(:,1),R(:,2),N(:,1),N(:,2),0.75)
-%
-% For lack of a better idea, start iteration with 
-%     u^0 = n dot grad (u^h), where u^h is a harmonic function
-% This ensures compatibility condition is satisfied.
-   u_harmonic = inline('x.^2-y.^2','x','y');
-   gradu_harmonic = inline('[2*x -2*y]','x','y');
-   gradu_bndry = gradu_harmonic(R(:,1),R(:,2));
-   u_0 = dot(gradu_bndry,N,2);
-   u_0 = u_0/norm(u_0,2);   % normalize
-%
-% Check compatibility condition
-   uhat = fft(u_0.*ds');
-   disp(['Compatibility condition = ',num2str(real(uhat(1))/Np)])
 %
 % Construct discrete integral operator K
    KN = zeros(Np,Np); 
@@ -70,49 +57,49 @@
 % Calculate SLP with density sigma using Alpert's quadrature rule of 
 % order 16
    [xs,ws,na]=alpertquad()
+   xs_all = [-flipud(xs);xs];
+   ws_all = [flipud(ws);ws];
 %
-% Power method iteration
-   figure(2)
-      title('Iterations')
-      hold on
-   tol = 1.d-12;
-   check = 1.
-   rhs = u_0;
-   itmax = 1000;
-   sigma_0 = ones(size(rhs));
-   iter = 1
-   while check>tol,
-       sigma_1 = KN\rhs;
-       lambda_0 = dot(sigma_1,sigma_0)/dot(sigma_0,sigma_0);
-       sigma_1 = sigma_1/norm(sigma_1,2);
-       plot (alpha,sigma_1)
-       check = norm(sigma_1-sigma_0);
-       rhs = SLP_EVAL(Np,na,xs,ws,R,ds,sigma_1,A,B,cx,cy);
-       sigma_0 = sigma_1;
-       iter = iter+1;
-   end
-   disp(['Converged in ',num2str(iter),' iterations'])
-   plot(alpha,sigma_1,'r')
-   lambda = -1/lambda_0
-   disp(['Eigenvalue = ',num2str(lambda)]);
-   sigma = sigma_1;
+% Construct Fourier interpolation matrix that interpolates a vector
+% to the nodes
+   F_int = fourier_interp(xs_all,Np);
+% Construct matrix for SLP evaluation
+   SLP_mat = SLP_EVAL_NEW(Np,na,xs_all,ws_all,F_int,R,ds,A,B,cx,cy);
+%
+% Calculate Steklov eigenvalues
+   [V,D] = eig(KN\SLP_mat);
+   D = diag(D);
+   disp(['Max imaginary part of eigenvalues = ',num2str(max(abs(imag(D))))])
+   [rho,I] = sort(real(D),'descend');
+%
+% Pick a max number of eigenvalues to look at
+   N_lambda = 10;
+   lambda = -1./rho(1:N_lambda)
 % 
 % Plot solution
    NX = 100; NY = 100; dx = 2*A/NX; dy = 2*B/NY;
    [xgrid,ygrid]=meshgrid(-A:dx:A,-B:dy:B);
    eps = 0.01;
    ugrid = zeros(size(xgrid));
-   for i =1:NX+1
-       for j = 1:NY+1
-          R_point = [xgrid(i,j) ygrid(i,j)];
-          check = (R_point(1)/A)^2 + (R_point(2)/B)^2;
-          if check<1-eps
-              ugrid(i,j) = SLP_EVAL_PNT(Np,R,ds,sigma,R_point);
-          else
-              ugrid(i,j) = 0.;
+   for i_lambda = 1:N_lambda
+       figure(1)
+       clf
+       sigma = V(:,I(i_lambda));
+       for i =1:NX+1
+          for j = 1:NY+1
+             R_point = [xgrid(i,j) ygrid(i,j)];
+             check = (R_point(1)/A)^2 + (R_point(2)/B)^2;
+             if check<1-eps
+                 ugrid(i,j) = SLP_EVAL_PNT(Np,R,ds,sigma,R_point);
+             else
+                 ugrid(i,j) = 0.;
+             end
           end
-       end
+      end
+      contour(xgrid,ygrid,ugrid,30)
+      axis equal
+      t = ['\lambda = ',num2str(lambda(i_lambda))];
+      title(t)
+      pause
    end
-   figure(5)
-   contour(xgrid,ygrid,ugrid,30)
            
